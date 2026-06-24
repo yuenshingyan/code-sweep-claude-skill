@@ -1,6 +1,27 @@
 ---
 name: code-sweep
-description: Sweep Rust codebase for logical errors, inefficiencies, data integrity issues, concurrency bugs, error handling problems, boundary validation gaps, and resource leaks. Uses parallel subagents for each focus area. Read-only report with ranked findings. TRIGGER when the user asks to "check logic", "find inefficiencies", "sweep for bugs", "code sweep", "/code-sweep", or similar.
+description: >-
+  Sweep Rust codebase for logical errors, inefficiencies, data
+  integrity issues, concurrency bugs, error handling problems,
+  boundary validation gaps, and resource leaks. Uses parallel
+  subagents for each focus area. Read-only report with ranked
+  findings.
+when_to_use: >-
+  TRIGGER when the user asks to "check logic",
+  "find inefficiencies", "sweep for bugs", "code sweep",
+  "find bugs in the code", "audit the code",
+  or similar. Not for style/naming (use /rust-best-practices)
+  or security audits.
+effort: max
+allowed-tools:
+  - Read
+  - Bash(rg *)
+  - Bash(grep *)
+  - Bash(find *)
+  - Bash(cargo clippy *)
+  - Bash(wc *)
+  - AskUserQuestion
+  - Agent
 ---
 
 # code-sweep
