@@ -188,9 +188,37 @@ Check that queries match their intent:
 
 ---
 
-### 3. Merge reports
+### 3. Validate findings against git history
 
-After all 7 subagents complete, merge their findings into a single report. Deduplicate any findings that overlap across focus areas (e.g., a transaction boundary issue found by both Logic and Data Integrity). Keep the higher severity classification if they differ.
+For each finding produced by the subagents, run these three commands to check whether the code was introduced deliberately:
+
+```bash
+# Who introduced this line and in which commit
+git blame -L <line>,<line> --porcelain <file>
+
+# What the introducing commit said
+git log -1 --format="%s%n%b" <hash>
+
+# Recent change activity on the file
+git log --oneline -n 5 -- <file>
+```
+
+Look for these false-positive signals:
+
+- **Commit message explains the pattern** — e.g., "intentionally suppress error here", "workaround for upstream bug", "by design — no rollback needed". Strong evidence the code is deliberate.
+- **Pattern survived multiple subsequent commits** — the file was changed several times after the suspicious line was introduced, yet the line was never touched. Reviewers likely accepted it.
+- **Line introduced alongside a comment or test** that acknowledges the same behavior.
+
+Handle likely false positives without silently dropping them:
+
+- **Strong signal** (commit message directly addresses the pattern): demote the finding to **Smell** and append a note — e.g., `(git: a1b2c3 "workaround for upstream bug" — appears intentional; verify with author)`
+- **Weak signal** (code is old and stable, no explanation in history): keep the original severity but append — e.g., `(git: unchanged since 2023-04 — may be intentional)`
+
+Findings with no git signal indicating intent keep their original severity unchanged.
+
+### 4. Merge and finalize report
+
+After all subagents complete and git validation is done, merge their findings into a single report. Deduplicate any findings that overlap across focus areas (e.g., a transaction boundary issue found by both Logic and Data Integrity). Keep the higher severity classification if they differ.
 
 ## Report format
 
