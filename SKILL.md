@@ -242,6 +242,7 @@ If no issues are found, say so explicitly with a summary of what was checked (fi
 - **Context matters for data source bugs.** `item.annotators` is correct for "who is currently assigned?" but wrong for "who has ever annotated?" — understand the intent before flagging.
 - **Don't flag `.clone()` on small types.** Cloning an `i32`, short `String`, or `Arc` is cheap. Only flag clones of large structs or inside hot loops with large N.
 - **Don't flag intentional `.ok()` / `let _ =`** where a comment or context makes clear the error is deliberately ignored (e.g., best-effort logging, cleanup on shutdown).
+- **Fix sketches must be inline, not abstracted.** Never suggest wrapping a one-liner in a helper function. The fix sketch should be the smallest diff that resolves the issue — a changed expression, a different method call, an added `.limit()`. If the existing code is already concise, the fix must be equally concise.
 - **Boundary validation is contextual.** Internal-only endpoints between trusted services need less validation than public-facing APIs. Understand the trust boundary before flagging.
 
 ## What this skill does NOT do
