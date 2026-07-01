@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added 2 new frontend focus areas (Frontend Logic & State, Frontend Bugs & Rendering), bringing the total to 9 — covers logical fallacies (stale closures, wrong effect dependencies, async state races) and rendering bugs (key-prop misuse, memory leaks, rules-of-hooks violations) in JS/TS, React, Vue, Svelte, and Angular code
+- Orientation now auto-detects the frontend framework from `package.json` and file idioms; if the stack is ambiguous or undetected, Claude asks which framework to target before dispatching frontend subagents
+- Scope now includes `.js`/`.jsx`/`.ts`/`.tsx`/`.vue`/`.svelte` files (skipping `node_modules/`, `dist/`, `build/`, `.next/`) alongside the existing `.rs` scope
 - Added git history validation (Step 3): checks each finding against `git blame`/`git log` to demote or annotate likely-intentional patterns as false positives
 - Fixed: `allowed-tools` was missing `Bash(git blame *)` / `Bash(git log *)`, so every git-history check triggered a manual permission prompt — large sweeps could silently stall partway through validation. Both commands are now pre-approved
 - Step 3 now explicitly requires validating every finding (not just a sample) and gates Step 4 on the validated count matching the total finding count
