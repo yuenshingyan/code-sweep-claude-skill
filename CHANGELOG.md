@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added git history validation (Step 3): checks each finding against `git blame`/`git log` to demote or annotate likely-intentional patterns as false positives
+- Fixed: `allowed-tools` was missing `Bash(git blame *)` / `Bash(git log *)`, so every git-history check triggered a manual permission prompt — large sweeps could silently stall partway through validation. Both commands are now pre-approved
+- Step 3 now explicitly requires validating every finding (not just a sample) and gates Step 4 on the validated count matching the total finding count
+
 ## 1.0.0 — 2026-06-23
 
 Initial public release.
