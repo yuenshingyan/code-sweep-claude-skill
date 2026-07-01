@@ -1,15 +1,17 @@
 ---
 name: code-sweep
 description: >-
-  Sweep Rust codebase for logical errors, inefficiencies, data
+  Sweep Rust and/or frontend (JS/TS, React, Vue, Svelte, Angular)
+  code for logical errors, logical fallacies, inefficiencies, data
   integrity issues, concurrency bugs, error handling problems,
-  boundary validation gaps, and resource leaks. Uses parallel
-  subagents for each focus area. Read-only report with ranked
-  findings.
+  boundary validation gaps, resource leaks, and rendering/state
+  bugs. Uses parallel subagents for each focus area. Read-only
+  report with ranked findings.
 when_to_use: >-
   TRIGGER when the user asks to "check logic",
   "find inefficiencies", "sweep for bugs", "code sweep",
   "find bugs in the code", "audit the code",
+  "sweep the frontend", "find bugs in my React/Vue/Svelte components",
   or similar. Not for style/naming (use /rust-best-practices)
   or security audits.
 effort: max
@@ -28,13 +30,13 @@ allowed-tools:
 
 # code-sweep
 
-Read-only sweep of a Rust codebase across 7 focus areas, run in parallel. Finds bugs that compile fine but produce wrong results, and code that works but wastes resources. Makes no edits, no commits — just a ranked report.
+Read-only sweep of a Rust and/or frontend (JS/TS) codebase across 9 focus areas, run in parallel. Finds bugs that compile fine but produce wrong results, code that works but wastes resources, and frontend logic/rendering bugs. Makes no edits, no commits — just a ranked report.
 
 ## Scope
 
-If the user names specific files or directories, audit only those. Otherwise audit all `.rs` files under `src/`, skipping `target/` and generated code.
+If the user names specific files or directories, audit only those. Otherwise audit all `.rs` files under `src/` (skipping `target/` and generated code) and, when frontend focus areas are selected, all `.js`/`.jsx`/`.ts`/`.tsx`/`.vue`/`.svelte` files under typical frontend roots (`src/`, `app/`, `components/`, `pages/`), skipping `node_modules/`, `dist/`, `build/`, `.next/`, and other generated/build output.
 
-**Prioritize by blast radius**: request handlers > shared business logic > background jobs > one-off scripts. If >30 `.rs` files, audit the top 10-15 by importance and note unevaluated files in the report.
+**Prioritize by blast radius**: request handlers / top-level routed pages/components > shared business logic / shared components & hooks > background jobs / one-off scripts & isolated utility components. If >30 files in a language track, audit the top 10-15 by importance and note unevaluated files in the report.
 
 ## Procedure
 
@@ -46,7 +48,7 @@ Before doing anything else, present a selection dialog to the user. Use the tool
 > Which focus areas should this sweep cover?
 
 **Options (multi-select):**
-1. **All** — run all 7 focus areas
+1. **All** — run all 9 focus areas
 2. **Logic & Data Sources** — wrong queries, stale sources, semantic mismatches, incorrect assumptions
 3. **Query & Computation Efficiency** — N+1 queries, redundant computation, over-fetching, unbounded queries
 4. **Async & Concurrency** — lock-across-await, sequential awaits, fire-and-forget, shared mutable state, atomics
@@ -54,8 +56,10 @@ Before doing anything else, present a selection dialog to the user. Use the tool
 6. **Error Handling** — silent swallowing, wrong mapping, lost context, panic in library code
 7. **Boundary Validation** — missing input validation, inconsistent checks, enum deserialization, path traversal
 8. **Resource & Memory** — unbounded growth, unclosed streams, connection pool exhaustion, leaked tasks
+9. **Frontend Logic & State** — incorrect conditionals, stale closures, wrong effect/watcher dependencies, race conditions in async state
+10. **Frontend Bugs & Rendering** — missing/wrong `key` props, unbounded re-renders, memory leaks, rules-of-hooks violations
 
-If the user selects **All**, run all 7. Otherwise run only the selected areas. Wait for the user's response before proceeding.
+If the user selects **All**, run all 9. Otherwise run only the selected areas. Wait for the user's response before proceeding.
 
 If the user already specified focus areas in their original message (e.g., "just check async and error handling"), skip this dialog and use their selection directly.
 
@@ -86,6 +90,20 @@ rg 'sqlx::query|query_as!|query!' src/ --type rust -l
 rg '\.fetch_one|\.fetch_all|\.execute\(' src/ --type rust -l
 ```
 
+**If Frontend Logic & State or Frontend Bugs & Rendering are selected**, also detect the frontend framework so subagents know which idioms are intentional:
+
+1. Read `package.json` `dependencies`/`devDependencies` for `react`, `vue`, `svelte`, `@angular/core`, `solid-js`, `next`, `nuxt`.
+2. Confirm with a grep pass:
+
+```bash
+rg 'useEffect|useState|useMemo|useCallback' -g '*.tsx' -g '*.jsx' -l   # React
+rg '<script setup>|defineComponent|ref\(|reactive\(' -g '*.vue' -l    # Vue
+rg '\$:|export let ' -g '*.svelte' -l                                  # Svelte
+rg '@Component|@Injectable|@Input|@Output' -g '*.ts' -l                # Angular
+```
+
+3. If exactly one framework is clearly present, proceed using its idioms. If `package.json` lists more than one frontend framework with substantial file counts, or no framework is detected despite frontend files existing, ask the user which framework to target via `AskUserQuestion` before dispatching the frontend subagents — do not guess.
+
 ### 2. Dispatch parallel subagents
 
 After orientation, launch **the selected focus areas as parallel subagents** (from Step 0). Each subagent gets its own context window and works independently. Do NOT run them sequentially — use parallel tool calls so they all run at the same time. Only dispatch focus areas the user selected.
@@ -95,7 +113,7 @@ Each subagent should:
 2. Produce findings in the standard severity format (Bug / Inefficiency / Smell)
 3. Return its section of the report
 
-The 7 focus areas and their instructions:
+The 9 focus areas and their instructions:
 
 ---
 
@@ -190,6 +208,36 @@ Check that queries match their intent:
 
 ---
 
+#### Focus Area H: Frontend Logic & State
+
+Check for logical fallacies and faulty reasoning in state/derivations — bugs that render or build fine but produce the wrong value or wrong screen:
+
+- **Incorrect boolean/conditional logic**: De Morgan's-law mistakes, negation errors, operator precedence bugs in `&&`/`||` chains
+- **Stale closures**: Callbacks or effects capturing outdated state/props from an earlier render
+- **Wrong dependency arrays**: Missing deps in `useEffect`/`useMemo`/`useCallback` (or a watcher/computed equivalent) causing stale reads, or extra deps causing thrashing
+- **Duplicated derived state**: A value copied into local state instead of computed on render, able to drift out of sync with its source
+- **Off-by-one errors**: List slicing, pagination offsets, or index math that's one short/long
+- **Reference-equality bugs**: Comparing objects/arrays by reference instead of value, causing missed updates; `==` vs `===` type-coercion bugs
+- **Async state races**: Out-of-order fetch/promise responses applied to state with no request-id or `AbortController` guard, so a stale response can overwrite a fresher one
+- **Wrong truthy/falsy assumptions**: Treating `0`, `''`, or `NaN` as "no value" incorrectly, or vice versa
+- **Direct state mutation**: Mutating an array/object in place (`.push`, field assignment) instead of via the setter/store API, silently missing re-renders
+- **Lossy spread merges**: `{...a, ...b}` or array spreads that drop nested fields the caller expected to survive the merge
+
+---
+
+#### Focus Area I: Frontend Bugs & Rendering
+
+- **Missing/incorrect `key` prop**: List rendering without a stable unique key, or keyed by array index where items reorder — causes state to bleed across the wrong items
+- **Unbounded re-renders**: State set directly in the render body, or an effect whose own state update re-triggers itself
+- **Memory leaks**: Event listeners, timers, subscriptions, or observers registered without a corresponding cleanup/teardown
+- **Update-after-unmount**: State/store updates from an async callback that resolves after the component has unmounted, with no cleanup or abort
+- **Defeated memoization**: Inline function/object/array literals passed as props to a `memo`/`useMemo`-wrapped child, forcing it to re-render every time anyway
+- **Rules-of-hooks violations**: Hooks called conditionally, in loops, or after an early return
+- **Controlled/uncontrolled input flip**: An input's value prop switches between `undefined` and a defined value across renders
+- **Duplicate fetch/subscription**: An effect re-running (e.g. double-invoke in strict/dev mode, or a changed dependency) fires the same fetch or subscription again without guarding against duplicates
+
+---
+
 ### 3. Validate findings against git history
 
 This step is mandatory for **every** finding from every subagent — Bug, Inefficiency, and Smell alike — no matter how many there are. Do not sample or stop early: a report that validates some findings and skips others is inconsistent and unreliable. If turn budget is tight, validate in smaller batches across multiple turns rather than skipping the remainder.
@@ -238,11 +286,13 @@ Severity levels:
 - **Smell** — not wrong today but fragile; likely to break as code evolves. Note for awareness.
 
 ```md
-## Rust logic & efficiency sweep
+## Logic & efficiency sweep
 
 ### Bugs
 - [src/server.rs:142](src/server.rs#L142) — **[Logic]** `get_assignments` queries `item.annotators` array for email lookup, but removed annotators disappear from that array. Should query `annotations` table for `created_by` IDs instead.
   **Fix**: `Annotation::find().filter(annotation::Column::ItemId.is_in(item_ids)).all(db).await` and extract unique `created_by` values.
+- [src/components/Search.tsx:58](src/components/Search.tsx#L58) — **[Frontend Logic]** Fetch results are applied to state with no request-id guard, so a slow earlier keystroke's response can overwrite a newer one.
+  **Fix**: Track a request id/`AbortController`; ignore responses that don't match the latest request.
 
 ### Inefficiencies
 - [src/annotation_server.rs:454](src/annotation_server.rs#L454) — **[Efficiency]** N+1 query: loops over items and issues one `COUNT(*)` per item.
@@ -250,6 +300,8 @@ Severity levels:
 
 ### Smells
 - [src/export_server.rs:170](src/export_server.rs#L170) — **[Efficiency]** Three `HashSet<i32>` rebuilds from `data.items` look redundant but are correct (each `retain` mutates). Add a comment to prevent future "cleanup" that breaks it.
+- [src/components/ItemList.tsx:31](src/components/ItemList.tsx#L31) — **[Frontend Bugs]** List keyed by array index while items are reorderable via drag-and-drop, causing input state to bleed onto the wrong row after a reorder.
+  **Fix**: Key by `item.id` instead of index.
 
 ### Summary
 | Focus area | Bugs | Inefficiencies | Smells |
@@ -261,10 +313,12 @@ Severity levels:
 | Error Handling | 0 | 0 | 0 |
 | Boundary Validation | 0 | 0 | 0 |
 | Resource & Memory | 0 | 0 | 0 |
-| **Total** | **1** | **1** | **1** |
+| Frontend Logic & State | 1 | 0 | 0 |
+| Frontend Bugs & Rendering | 0 | 0 | 1 |
+| **Total** | **2** | **1** | **2** |
 ```
 
-Tag each finding with its focus area in brackets (e.g., **[Logic]**, **[Async]**, **[Boundary]**) so the user knows which area surfaced it.
+Tag each finding with its focus area in brackets (e.g., **[Logic]**, **[Async]**, **[Boundary]**, **[Frontend Logic]**, **[Frontend Bugs]**) so the user knows which area surfaced it.
 
 If no issues are found, say so explicitly with a summary of what was checked (file count, function count) so the user knows the sweep ran thoroughly.
 
@@ -280,6 +334,9 @@ If no issues are found, say so explicitly with a summary of what was checked (fi
 - **Don't flag intentional `.ok()` / `let _ =`** where a comment or context makes clear the error is deliberately ignored (e.g., best-effort logging, cleanup on shutdown).
 - **Fix sketches must be inline, not abstracted.** Never suggest wrapping a one-liner in a helper function. The fix sketch should be the smallest diff that resolves the issue — a changed expression, a different method call, an added `.limit()`. If the existing code is already concise, the fix must be equally concise.
 - **Boundary validation is contextual.** Internal-only endpoints between trusted services need less validation than public-facing APIs. Understand the trust boundary before flagging.
+- **Frontend framework idioms override general rules.** A `useEffect(() => {...}, [])` "run once on mount" pattern, Vue's `watchEffect`, and Svelte's reactive `$:` statements are intentional — don't flag the "missing"/"extra" dependency as a bug just because a generic rule would suggest otherwise.
+- **Don't flag test/story-only code.** Files under `__tests__`, `*.test.tsx`, `*.spec.ts`, or `*.stories.tsx` are exempt from rendering/state findings — they intentionally exercise edge cases.
+- **New identity per render isn't automatically a bug.** React re-creates inline functions/objects on every render by default; only flag this as a Frontend Bugs finding when it demonstrably defeats a `memo`/`useMemo`/`useCallback` on an expensive child, not as a blanket style rule.
 
 ## What this skill does NOT do
 
@@ -288,4 +345,5 @@ If no issues are found, say so explicitly with a summary of what was checked (fi
 - Run the application or write tests.
 - Audit code style, naming, or formatting (use `rust-best-practices` for that).
 - Audit for dead code (use `check-dead-backend-code` for that).
-- Audit for security vulnerabilities (OWASP-style) — only logical correctness and efficiency.
+- Audit for security vulnerabilities (OWASP-style, e.g. XSS/CSRF) — only logical correctness and efficiency, back-end or front-end (use `security-review` for security).
+- Audit frontend accessibility (a11y) or CSS/visual styling — only logic and rendering correctness.
