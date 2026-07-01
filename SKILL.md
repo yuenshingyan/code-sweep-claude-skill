@@ -20,6 +20,8 @@ allowed-tools:
   - Bash(find *)
   - Bash(cargo clippy *)
   - Bash(wc *)
+  - Bash(git blame *)
+  - Bash(git log *)
   - AskUserQuestion
   - Agent
 ---
@@ -190,7 +192,9 @@ Check that queries match their intent:
 
 ### 3. Validate findings against git history
 
-For each finding produced by the subagents, run these three commands to check whether the code was introduced deliberately:
+This step is mandatory for **every** finding from every subagent — Bug, Inefficiency, and Smell alike — no matter how many there are. Do not sample or stop early: a report that validates some findings and skips others is inconsistent and unreliable. If turn budget is tight, validate in smaller batches across multiple turns rather than skipping the remainder.
+
+For each finding, run these three commands to check whether the code was introduced deliberately:
 
 ```bash
 # Who introduced this line and in which commit
@@ -202,6 +206,8 @@ git log -1 --format="%s%n%b" <hash>
 # Recent change activity on the file
 git log --oneline -n 5 -- <file>
 ```
+
+Multiple findings often land in the same file — cache the `git log --oneline -n 5 -- <file>` output per file and reuse it across findings in that file instead of re-running it, to cut down the total number of commands on large sweeps.
 
 Look for these false-positive signals:
 
@@ -215,6 +221,8 @@ Handle likely false positives without silently dropping them:
 - **Weak signal** (code is old and stable, no explanation in history): keep the original severity but append — e.g., `(git: unchanged since 2023-04 — may be intentional)`
 
 Findings with no git signal indicating intent keep their original severity unchanged.
+
+**Before moving to Step 4**, confirm the number of findings you validated equals the total number of findings produced by all subagents. If they don't match, resume Step 3 on the remaining findings first — do not merge or finalize a report with unvalidated findings.
 
 ### 4. Merge and finalize report
 
