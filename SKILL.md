@@ -280,11 +280,35 @@ After all subagents complete and git validation is done, merge their findings in
 
 This step never runs as part of a normal sweep — the sweep itself stays read-only. Only enter this step if, in a later message, the user explicitly asks Claude to fix, apply, or resolve the findings from a prior sweep report (e.g. "fix these", "apply the fixes", "fix all issues you found").
 
-1. **Confirm scope.** Ask via `AskUserQuestion` which severities to fix: "All findings" (Bugs + Inefficiencies + Smells), "Bugs + Inefficiencies only" (recommended default), or "Bugs only" — show the finding count in each bucket. Skip the dialog only if the user's follow-up message already specifies scope unambiguously (e.g. "fix all the bugs"), matching the same skip pattern as Step 0. Findings demoted to likely-false-positive during Step 3's git validation are excluded from the fixable set by default, regardless of scope, unless the user explicitly overrides.
-2. **Partition by file to avoid conflicts.** Group the in-scope findings by `file`. Every finding for a given file must be handled by exactly one agent — never let two parallel agents hold edit access to the same file at the same time. Small unrelated single-finding files may be packed into one agent's batch to keep fan-out sane, but a single file's findings must never be split across two agents.
-3. **Dispatch fix agents in parallel.** Launch one Agent (general-purpose type) per file-partition, all in a single message with multiple tool calls — the same "run in parallel, not sequentially" convention as Step 2. Give each agent the complete list of findings for its file(s) (exact `file:line`, the problem, and the fix sketch from the report) so it applies all fixes to that file in one pass. Explicitly scope each agent's prompt to only its assigned file(s) and instruct it not to touch anything else.
-4. **Fix fidelity.** Agents must apply the fix sketch as written — the smallest diff that resolves the issue, per the "Fix sketches must be inline, not abstracted" judgment call below. If the code has drifted since the report was generated and the sketch no longer applies cleanly, the agent should skip that finding and report why rather than guessing.
-5. **Verify and summarize.** After all agents complete, run the stack-appropriate check already used elsewhere in this skill (`cargo check`/`cargo clippy` for Rust, `tsc --noEmit` or the project's lint/build script for frontend, if available) to confirm the combined edits compile/typecheck cleanly. Report a final summary of which findings were fixed vs. skipped and why, grouped by file.
+Run the following loop until the user is done:
+
+#### 5a. Present finding picker
+
+Build a multi-select `AskUserQuestion` listing every fixable finding from the report. Findings demoted to likely-false-positive during Step 3's git validation are excluded from the picker by default unless the user explicitly asks to include them.
+
+Format each option as:
+
+- **label**: `[Severity] file:line — short summary` (e.g., `[Bug] src/server.rs:142 — stale annotator query`)
+- **description**: The fix sketch from the report so the user knows what will change
+
+If the user's follow-up message already specifies an unambiguous scope (e.g., "fix all the bugs", "fix everything"), skip the picker for the first iteration and select the matching findings automatically — but still present the picker on subsequent iterations if unfixed findings remain.
+
+#### 5b. Fix selected findings
+
+1. **Partition by file to avoid conflicts.** Group the user's selected findings by file. Every finding for a given file must be handled by exactly one agent — never let two parallel agents hold edit access to the same file at the same time. Small unrelated single-finding files may be packed into one agent's batch to keep fan-out sane, but a single file's findings must never be split across two agents.
+2. **Dispatch fix agents in parallel.** Launch one Agent (general-purpose type) per file-partition, all in a single message with multiple tool calls — the same "run in parallel, not sequentially" convention as Step 2. Give each agent the complete list of findings for its file(s) (exact `file:line`, the problem, and the fix sketch from the report) so it applies all fixes to that file in one pass. Explicitly scope each agent's prompt to only its assigned file(s) and instruct it not to touch anything else.
+3. **Fix fidelity.** Agents must apply the fix sketch as written — the smallest diff that resolves the issue, per the "Fix sketches must be inline, not abstracted" judgment call below. If the code has drifted since the report was generated and the sketch no longer applies cleanly, the agent should skip that finding and report why rather than guessing.
+
+#### 5c. Verify and report
+
+After all fix agents complete, run the stack-appropriate check (`cargo check`/`cargo clippy` for Rust, `tsc --noEmit` or the project's lint/build script for frontend, if available) to confirm the combined edits compile/typecheck cleanly. Report which findings were fixed vs. skipped and why, grouped by file.
+
+#### 5d. Loop or exit
+
+If unfixed findings remain (either unselected in 5a or skipped during 5b), loop back to **5a** and present the remaining findings in a new picker. The user can select more to fix, or pick nothing / select "Other" to stop. Exit the loop when:
+
+- The user selects no findings (empty selection or explicitly declines), OR
+- All findings have been fixed or skipped
 
 ## Report format
 
