@@ -46,8 +46,6 @@ Before doing anything else, present a selection dialog to the user. Use the tool
 
 If the user selects **All**, run all 9. Otherwise run only the selected areas. Wait for the user's response before proceeding.
 
-If the user already specified focus areas in their original message (e.g., "just check async and error handling"), skip this dialog and use their selection directly.
-
 ### 1. Orient — understand the stack
 
 Before any analysis, read the project's manifest/dependency file and entrypoint to learn the language and any frameworks in use. Don't assume a specific language or library — discover it by reading, and let what you find determine which idioms are intentional and which "don't flag this" exceptions apply.
