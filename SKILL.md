@@ -121,9 +121,7 @@ Findings with no git signal indicating intent keep their original severity uncha
 
 After all subagents complete and git validation is done, merge their findings into a single report. If the selected area was sharded (Step 2), this is a straightforward concatenation — shards cover disjoint files, so no cross-shard dedup is needed.
 
-### 5. Optional follow-up: fix findings (only if explicitly requested)
-
-This step never runs as part of a normal sweep — the sweep itself stays read-only. Only enter this step if, in a later message, the user explicitly asks Claude to fix, apply, or resolve the findings from a prior sweep report (e.g. "fix these", "apply the fixes", "fix all issues you found").
+### 5. Fix findings
 
 Run the following loop until the user is done:
 
