@@ -65,17 +65,15 @@ Launch as a subagent rather than reviewing inline either way. This keeps each su
 
 Each focus area's full checklist lives in its own file under this skill's own `focus-areas/` directory (resolve these paths relative to the skill's base directory, not the project being audited) — kept separate so neither the orchestrator nor any one subagent has to load all nine checklists at once:
 
-| Focus area | File |
-|---|---|
-| Logic & Data Sources | `focus-areas/logic-data-sources.md` |
-| Query & Computation Efficiency | `focus-areas/query-computation-efficiency.md` |
-| Async & Concurrency | `focus-areas/async-concurrency.md` |
-| Data Integrity | `focus-areas/data-integrity.md` |
-| Error Handling | `focus-areas/error-handling.md` |
-| Boundary Validation | `focus-areas/boundary-validation.md` |
-| Resource & Memory | `focus-areas/resource-memory.md` |
-| Frontend Logic & State | `focus-areas/frontend-logic-state.md` |
-| Frontend Bugs & Rendering | `focus-areas/frontend-bugs-rendering.md` |
+- **Logic & Data Sources**: `focus-areas/logic-data-sources.md`
+- **Query & Computation Efficiency**: `focus-areas/query-computation-efficiency.md`
+- **Async & Concurrency**: `focus-areas/async-concurrency.md`
+- **Data Integrity**: `focus-areas/data-integrity.md`
+- **Error Handling**: `focus-areas/error-handling.md`
+- **Boundary Validation**: `focus-areas/boundary-validation.md`
+- **Resource & Memory**: `focus-areas/resource-memory.md`
+- **Frontend Logic & State**: `focus-areas/frontend-logic-state.md`
+- **Frontend Bugs & Rendering**: `focus-areas/frontend-bugs-rendering.md`
 
 Do not read the selected area's file yourself before dispatching — that would defeat the point of splitting them out. Instead, give each subagent the absolute path to the same checklist file (every shard of one area uses the same file) and instruct it to Read that file first, as its first action, before doing anything else.
 
