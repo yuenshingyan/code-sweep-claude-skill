@@ -4,8 +4,9 @@ description: >-
   Sweep logical fallacies, inefficiencies, data integrity issues, 
   concurrency bugs, error handling problems, boundary validation gaps, 
   resource leaks, and rendering/state bugs. Runs the selected focus 
-  area as one or more parallel subagents, sharded by file count on 
-  large codebases. Read-only report with ranked findings.
+  area — or all areas at once — as one or more parallel subagents, 
+  sharded by file count on large codebases. Read-only report with 
+  ranked findings.
 when_to_use: >-
   TRIGGER when the user /code-sweep. Not for style/naming 
   (use /rust-best-practices) or security audits.
@@ -43,8 +44,9 @@ Before anything else, ask the user to pick exactly one focus area via a single-c
 7. **Resource & Memory** — unbounded growth, unclosed streams, connection pool exhaustion, leaked tasks
 8. **Frontend Logic & State** — incorrect conditionals, stale closures, wrong effect/watcher dependencies, race conditions in async state
 9. **Frontend Bugs & Rendering** — missing/wrong list keys, unbounded re-renders, memory leaks, reactivity-rule violations
+10. **All** — run every focus area above in one sweep
 
-Run only the selected area, and wait for the response before proceeding.
+Run only the selected area (or every area if **All** is chosen), and wait for the response before proceeding.
 
 ### 1. Orient — understand the stack
 
@@ -52,7 +54,7 @@ Read the project's manifest/dependency file and entrypoint first to learn the la
 
 Locate the data-access layer by reading code, not by grepping for one library's API by name. Read a few call sites that query, save, or mutate stored records to learn the real data-access vocabulary, then reuse it for later grep passes.
 
-**If a frontend focus area is selected**, also identify the frontend framework/templating approach from the manifest and a representative file, so subagents know which state/effect/lifecycle idioms are intentional for it. If multiple frameworks have substantial file counts, or none is clearly identifiable despite frontend files existing, ask the user via `AskUserQuestion` rather than guess.
+**If a frontend focus area is selected (or All)**, also identify the frontend framework/templating approach from the manifest and a representative file, so subagents know which state/effect/lifecycle idioms are intentional for it. If multiple frameworks have substantial file counts, or none is clearly identifiable despite frontend files existing, ask the user via `AskUserQuestion` rather than guess.
 
 ### 2. Dispatch the focus-area subagent(s)
 
@@ -60,6 +62,8 @@ Count the files relevant to the selected area (from Step 1):
 
 - **≤30 files**: one subagent for the whole area.
 - **>30 files**: shard into groups of at most 15, ordered by blast-radius priority (highest-priority first), one subagent per shard — up to a cap of 4 shards (60 files) — all in parallel. If files remain beyond that, note the lowest-priority remainder as unevaluated in the final report rather than dropping it silently.
+
+**If All was selected**: apply the rules above independently per area — count each area's relevant files and shard each area on its own — but drop the shard cap from 4 to 2 per area (30 files per area) so total fan-out stays bounded at 18 subagents. Dispatch every area's subagents together in parallel; each subagent still receives exactly one area's checklist file. Note any per-area remainder beyond the cap as unevaluated, per area.
 
 Always dispatch as subagent(s), never review inline. This keeps each subagent's context limited to just its checklist and assigned files, isolated from the orchestrator's conversation (the picker dialog, orientation steps, etc.) — that isolation is what keeps findings accurate, whether one subagent runs or several shards do.
 
@@ -120,6 +124,8 @@ Findings with no git signal indicating intent keep their original severity uncha
 ### 4. Merge and finalize report
 
 Merge all subagents' findings into a single report. If the selected area was sharded (Step 2), this is a plain concatenation — shards cover disjoint files, so no cross-shard dedup is needed.
+
+**If All was selected**, dedup across areas before finalizing: different areas can flag the same `file:line` (e.g., an unbounded query surfacing as both an Efficiency and a Resource finding). Merge such duplicates into one entry under the higher severity, noting both areas' perspectives.
 
 ### 5. Fix findings
 
@@ -182,7 +188,7 @@ Severity levels:
 | 1 | 1 | 1 |
 ```
 
-Name the report after the focus area that was run (as in the heading above) — since only one area runs per sweep, individual findings don't need area tags.
+Name the report after the focus area that was run (as in the heading above) — when a single area runs, individual findings don't need area tags. **If All was selected**, title the report `## Full sweep` and give each area its own subsection in the format above (skipping areas with no findings), followed by one combined summary table with a row per area.
 
 If no issues are found, say so explicitly with a summary of what was checked (file count, function count) so the user knows the sweep ran thoroughly.
 
