@@ -58,135 +58,27 @@ Locate the data-access layer by reading the code, not by grepping for one librar
 
 After orientation, launch **the selected focus areas as parallel subagents** (from Step 0). Each subagent gets its own context window and works independently. Do NOT run them sequentially — use parallel tool calls so they all run at the same time. Only dispatch focus areas the user selected.
 
+Each focus area's full checklist lives in its own file under this skill's own `focus-areas/` directory (resolve these paths relative to the skill's base directory, not the project being audited) — kept separate so neither the orchestrator nor any one subagent has to load all nine checklists at once:
+
+| Focus area | File |
+|---|---|
+| Logic & Data Sources | `focus-areas/logic-data-sources.md` |
+| Query & Computation Efficiency | `focus-areas/query-computation-efficiency.md` |
+| Async & Concurrency | `focus-areas/async-concurrency.md` |
+| Data Integrity | `focus-areas/data-integrity.md` |
+| Error Handling | `focus-areas/error-handling.md` |
+| Boundary Validation | `focus-areas/boundary-validation.md` |
+| Resource & Memory | `focus-areas/resource-memory.md` |
+| Frontend Logic & State | `focus-areas/frontend-logic-state.md` |
+| Frontend Bugs & Rendering | `focus-areas/frontend-bugs-rendering.md` |
+
+Do not read these files yourself before dispatching — that would defeat the point of splitting them out. Instead, give each subagent the absolute path to its one file and instruct it to Read that file first, as its first action, before doing anything else.
+
 Each subagent should:
-1. Read only the files relevant to its focus area
-2. Produce findings in the standard severity format (Bug / Inefficiency / Smell)
-3. Return its section of the report
-
-The 9 focus areas and their instructions:
-
----
-
-#### Focus Area A: Logic & Data Sources
-
-Check that queries match their intent:
-
-- **Stale source**: Function queries a cached/denormalized field/table when it should query the source of truth
-- **Wrong join direction**: A join or relation traversal expressed backwards relative to the actual foreign-key direction
-- **Missing filter**: Returns all rows/records when it should filter by project/user/status/tenant
-- **Overly broad filter**: Filters by a superset when it should filter by a subset
-- **Stale cache**: Reads a denormalized/cached field that could be out of sync with the source table
-- **Semantic mismatches**: Function name doesn't match behavior; return values ignored; invariants assumed but not enforced; invalid state transitions possible
-- **Incorrect assumptions**: Race conditions on read-then-write without a transaction/lock; silent data loss via broad exception swallowing or silent fallback values in place of surfacing a failure; integer overflow/truncation via unchecked numeric conversions; crashes on empty collections
-
----
-
-#### Focus Area B: Query & Computation Efficiency
-
-- **N+1 queries**: A query/fetch call inside a loop that hits the DB — helper functions may hide the query
-- **Unbatched queries**: Multiple sequential single-row queries that could use `IN (...)`, a join, or a bulk fetch
-- **Over-fetching**: Full records/objects fetched when only a count or single field is needed
-- **Missing index hints**: Queries filtering on columns that likely aren't indexed
-- **SELECT * for existence checks**: Fetching a full record just to check if something exists
-- **Unbounded queries**: No limit/pagination on user-facing list endpoints
-- **Redundant queries**: Same data fetched multiple times within the same request/handler
-- **Recomputed values**: Values computed repeatedly inside a loop that could be computed once before it
-- **Duplicate collection passes**: Multiple iterations over the same collection that could be merged into one
-- **Unnecessary copies**: Deep-copying/cloning large structures in loops (ignore cheap copies of small primitives or reference-counted handles)
-- **Collect-then-iterate**: Materializing a collection immediately before iterating it exactly once
-- **Rebuilding data structures**: A lookup structure (map/set) rebuilt on every call when it could be built once and reused
-
----
-
-#### Focus Area C: Async & Concurrency
-
-**Async bugs:**
-- **Lock held across a suspension point**: A mutex/lock guard still held while the code awaits/yields, risking deadlock
-- **Sequential awaits that could be concurrent**: Two independent async operations awaited one after another when the runtime offers a way to run them concurrently instead
-- **Fire-and-forget spawns**: A background task/goroutine/thread started without capturing its handle or errors — failures silently swallowed
-
-**Concurrency bugs:**
-- **Shared mutable state without synchronization**: Global/static mutable state accessed from multiple threads/tasks without a lock or atomic
-- **Unsound thread-safety overrides**: Manual assertions or annotations claiming a type/value is safe to share across threads when that safety hasn't actually been verified
-- **Weak memory ordering**: Atomics using a relaxed ordering where a stronger one is needed for correctness
-- **Inconsistent lock ordering**: Multiple locks acquired in different orders across call sites, risking deadlock
-
----
-
-#### Focus Area D: Data Integrity
-
-- **Partial writes without rollback**: Multi-step mutations where a failure mid-way leaves data in an inconsistent state, not wrapped in a transaction
-- **Orphaned records**: Deletion of a parent entity without cleaning up related child records
-- **Foreign key assumptions**: Code assumes referential integrity that isn't enforced at the DB level
-- **Inconsistent data sources**: Two functions that should return the same data but query different tables/fields
-- **Duplicate logic**: Same business rule implemented in two places that could drift apart
-- **Transaction boundaries**: Multi-step mutations that should be atomic but aren't wrapped in a transaction
-- **Soft-delete leaks**: Queries that don't filter out soft-deleted rows when they should, returning already-deleted records
-
----
-
-#### Focus Area E: Error Handling
-
-- **Silent swallowing**: Broad catch-and-ignore patterns that discard a failure without acting on it — distinguish intentional suppression from accidental
-- **Wrong error mapping**: Catching a specific error but mapping everything to one generic failure response when some cases warrant a more specific one
-- **Lost error context**: Re-wrapping or mapping an error in a way that discards the original message or type
-- **Retry on non-retryable**: Retrying operations that failed due to validation or permission errors, not transient ones
-- **Crashes in shared/library code**: An unguarded failure (unhandled exception, forced unwrap, assertion) in shared code paths where the caller has no way to catch or recover from it
-- **Error type mismatches**: A function's declared/returned error type doesn't match what callers actually expect, papered over by a lossy conversion
-
----
-
-#### Focus Area F: Boundary Validation
-
-- **Missing input validation**: API endpoints that accept user input without checking length, range, format, or type constraints
-- **Inconsistent validation**: One endpoint validates a field (e.g., email format) but another endpoint accepting the same field doesn't
-- **String length before DB insert**: Strings accepted without length limits that will hit DB column limits and error at write time
-- **Enum/type deserialization**: Accepting serialized values that the business logic can't handle or doesn't expect
-- **Negative/zero values**: Numeric inputs (pagination, quantities, IDs) not checked for negative or zero when those are nonsensical
-- **Path traversal**: File paths or identifiers built from user input without sanitization
-
----
-
-#### Focus Area G: Resource & Memory
-
-- **Unbounded collection growth**: Collections that grow with user-controlled input without any cap
-- **Unclosed streams/connections**: DB connections, file handles, sockets, or HTTP streams opened but never explicitly closed or released when the language/runtime requires explicit cleanup
-- **Connection pool exhaustion**: Long-held connections (e.g., streaming results while doing other work) that could starve the pool
-- **Large allocations in loops**: Allocating large buffers or strings inside a loop that could be allocated once and reused
-- **Unbounded queues/channels**: An unbounded queue or channel where a slow consumer causes unbounded memory growth
-- **Leaked background tasks**: Spawned tasks/threads/goroutines that never complete and have no cancellation mechanism
-
----
-
-#### Focus Area H: Frontend Logic & State
-
-Check for logical fallacies and faulty reasoning in state/derivations — bugs that render or build fine but produce the wrong value or wrong screen:
-
-- **Incorrect boolean/conditional logic**: De Morgan's-law mistakes, negation errors, operator precedence bugs in boolean chains
-- **Stale closures**: Callbacks or reactive effects capturing outdated state/props from an earlier render/update cycle
-- **Wrong reactive dependencies**: Missing dependencies in a reactive computation (an effect, memo, computed value, or watcher) causing stale reads, or extra dependencies causing thrashing
-- **Duplicated derived state**: A value copied into local state instead of computed on render/update, able to drift out of sync with its source
-- **Off-by-one errors**: List slicing, pagination offsets, or index math that's one short/long
-- **Reference-equality bugs**: Comparing objects/arrays by reference instead of value, causing missed updates; loose vs. strict equality/type-coercion bugs
-- **Async state races**: Out-of-order fetch/promise responses applied to state with no request-id or cancellation guard, so a stale response can overwrite a fresher one
-- **Wrong truthy/falsy assumptions**: Treating `0`, `''`, or `NaN`/`None` as "no value" incorrectly, or vice versa
-- **Direct state mutation**: Mutating an array/object in place instead of via the framework's setter/store API, silently missing re-renders
-- **Lossy merges**: Spread/merge operations that drop nested fields the caller expected to survive
-
----
-
-#### Focus Area I: Frontend Bugs & Rendering
-
-- **Missing/incorrect list key**: List rendering without a stable unique key, or keyed by array index where items reorder — causes state to bleed across the wrong items
-- **Unbounded re-renders**: State set directly in the render body, or an effect whose own state update re-triggers itself
-- **Memory leaks**: Event listeners, timers, subscriptions, or observers registered without a corresponding cleanup/teardown
-- **Update-after-unmount**: State/store updates from an async callback that resolves after the component has unmounted, with no cleanup or abort
-- **Defeated memoization**: Inline function/object/array literals passed as props to a memoized child, forcing it to re-render every time anyway
-- **Reactivity-rule violations**: Reactive primitives invoked conditionally, in loops, or after an early return, when the framework requires a stable call/registration order
-- **Controlled/uncontrolled input flip**: An input's bound value switches between `undefined`/unset and a defined value across renders
-- **Duplicate fetch/subscription**: An effect re-running (e.g. double-invoke in strict/dev mode, or a changed dependency) fires the same fetch or subscription again without guarding against duplicates
-
----
+1. Read its assigned focus-area file (and only that file) to get its checklist
+2. Read only the source files relevant to its focus area
+3. Produce findings in the standard severity format (Bug / Inefficiency / Smell)
+4. Return its section of the report
 
 ### 3. Validate findings against git history
 
