@@ -1,40 +1,25 @@
 ---
 name: code-sweep
 description: >-
-  Sweep Rust and/or frontend (JS/TS, React, Vue, Svelte, Angular)
-  code for logical errors, logical fallacies, inefficiencies, data
-  integrity issues, concurrency bugs, error handling problems,
-  boundary validation gaps, resource leaks, and rendering/state
-  bugs. Uses parallel subagents for each focus area. Read-only
-  report with ranked findings.
+  Sweep logical fallacies, inefficiencies, data integrity issues, 
+  concurrency bugs, error handling problems, boundary validation gaps, 
+  resource leaks, and rendering/state bugs. Uses parallel subagents 
+  for each focus area. Read-only report with ranked findings.
 when_to_use: >-
-  TRIGGER when the user asks to "check logic",
-  "find inefficiencies", "sweep for bugs", "code sweep",
-  "find bugs in the code", "audit the code",
-  "sweep the frontend", "find bugs in my React/Vue/Svelte components",
-  or similar. Not for style/naming (use /rust-best-practices)
-  or security audits.
+  TRIGGER when the user /code-sweep. Not for style/naming 
+  (use /rust-best-practices) or security audits.
 effort: max
 allowed-tools:
   - Read
   - Bash(rg *)
   - Bash(grep *)
   - Bash(find *)
-  - Bash(cargo clippy *)
   - Bash(wc *)
   - Bash(git blame *)
   - Bash(git log *)
   - AskUserQuestion
   - Agent
 ---
-
-# code-sweep
-
-Read-only sweep of a Rust and/or frontend (JS/TS) codebase across 9 focus areas, run in parallel. Finds bugs that compile fine but produce wrong results, code that works but wastes resources, and frontend logic/rendering bugs. Makes no edits, no commits — just a ranked report.
-
-## Scope
-
-If the user names specific files or directories, audit only those. Otherwise audit all `.rs` files under `src/` (skipping `target/` and generated code) and, when frontend focus areas are selected, all `.js`/`.jsx`/`.ts`/`.tsx`/`.vue`/`.svelte` files under typical frontend roots (`src/`, `app/`, `components/`, `pages/`), skipping `node_modules/`, `dist/`, `build/`, `.next/`, and other generated/build output.
 
 **Prioritize by blast radius**: request handlers / top-level routed pages/components > shared business logic / shared components & hooks > background jobs / one-off scripts & isolated utility components. If >30 files in a language track, audit the top 10-15 by importance and note unevaluated files in the report.
 
@@ -51,13 +36,13 @@ Before doing anything else, present a selection dialog to the user. Use the tool
 1. **All** — run all 9 focus areas
 2. **Logic & Data Sources** — wrong queries, stale sources, semantic mismatches, incorrect assumptions
 3. **Query & Computation Efficiency** — N+1 queries, redundant computation, over-fetching, unbounded queries
-4. **Async & Concurrency** — lock-across-await, sequential awaits, fire-and-forget, shared mutable state, atomics
+4. **Async & Concurrency** — lock-across-suspension, sequential awaits, fire-and-forget, shared mutable state, weak atomics
 5. **Data Integrity** — partial writes, orphaned records, transaction boundaries, soft-delete leaks
-6. **Error Handling** — silent swallowing, wrong mapping, lost context, panic in library code
-7. **Boundary Validation** — missing input validation, inconsistent checks, enum deserialization, path traversal
+6. **Error Handling** — silent swallowing, wrong mapping, lost context, crashes in library code
+7. **Boundary Validation** — missing input validation, inconsistent checks, enum/type deserialization, path traversal
 8. **Resource & Memory** — unbounded growth, unclosed streams, connection pool exhaustion, leaked tasks
 9. **Frontend Logic & State** — incorrect conditionals, stale closures, wrong effect/watcher dependencies, race conditions in async state
-10. **Frontend Bugs & Rendering** — missing/wrong `key` props, unbounded re-renders, memory leaks, rules-of-hooks violations
+10. **Frontend Bugs & Rendering** — missing/wrong list keys, unbounded re-renders, memory leaks, reactivity-rule violations
 
 If the user selects **All**, run all 9. Otherwise run only the selected areas. Wait for the user's response before proceeding.
 
@@ -65,44 +50,11 @@ If the user already specified focus areas in their original message (e.g., "just
 
 ### 1. Orient — understand the stack
 
-Before any analysis, skim `Cargo.toml` for the ORM, DB driver, and async runtime, and `src/main.rs` or `src/lib.rs` for module structure. This tells you which query patterns to look for and which framework idioms are intentional.
+Before any analysis, read the project's manifest/dependency file and entrypoint to learn the language and any frameworks in use. Don't assume a specific language or library — discover it by reading, and let what you find determine which idioms are intentional and which "don't flag this" exceptions apply.
 
-Identify server functions and data-fetching code. Adapt grep patterns to the ORM in use:
+Locate the data-access layer by reading the code, not by grepping for one library's API by name. Read a handful of call sites that read or write persisted data — functions/methods whose names or usage suggest they query, save, or mutate stored records — to learn the actual data-access API in use, then use that vocabulary for your own grep passes for the rest of this focus area.
 
-**SeaORM:**
-```bash
-rg '#\[server\]' src/ --type rust -l
-rg 'Entity::find|::find_by_id|::find_related|execute.*query' src/ --type rust -l
-```
-
-**Diesel:**
-```bash
-rg 'table::table\.filter|\.load::<|\.execute\(' src/ --type rust -l
-```
-
-**sqlx:**
-```bash
-rg 'sqlx::query|query_as!|query!' src/ --type rust -l
-```
-
-**Raw / other:**
-```bash
-rg '\.fetch_one|\.fetch_all|\.execute\(' src/ --type rust -l
-```
-
-**If Frontend Logic & State or Frontend Bugs & Rendering are selected**, also detect the frontend framework so subagents know which idioms are intentional:
-
-1. Read `package.json` `dependencies`/`devDependencies` for `react`, `vue`, `svelte`, `@angular/core`, `solid-js`, `next`, `nuxt`.
-2. Confirm with a grep pass:
-
-```bash
-rg 'useEffect|useState|useMemo|useCallback' -g '*.tsx' -g '*.jsx' -l   # React
-rg '<script setup>|defineComponent|ref\(|reactive\(' -g '*.vue' -l    # Vue
-rg '\$:|export let ' -g '*.svelte' -l                                  # Svelte
-rg '@Component|@Injectable|@Input|@Output' -g '*.ts' -l                # Angular
-```
-
-3. If exactly one framework is clearly present, proceed using its idioms. If `package.json` lists more than one frontend framework with substantial file counts, or no framework is detected despite frontend files existing, ask the user which framework to target via `AskUserQuestion` before dispatching the frontend subagents — do not guess.
+**If Frontend Logic & State or Frontend Bugs & Rendering are selected**, also identify the frontend framework (or templating/rendering approach) in use from the manifest and a representative file, so subagents know which idioms — state declarations, effects/derivations, lifecycle hooks — are intentional for it. If more than one frontend approach is present with substantial file counts, or none is clearly identifiable despite frontend files existing, ask the user which to target via `AskUserQuestion` before dispatching the frontend subagents — do not guess.
 
 ### 2. Dispatch parallel subagents
 
@@ -121,45 +73,45 @@ The 9 focus areas and their instructions:
 
 Check that queries match their intent:
 
-- **Stale source**: Function queries a cached/denormalized field when it should query the source-of-truth table
-- **Wrong join direction**: Joins A→B when the relationship is B→A
-- **Missing filter**: Returns all rows when it should filter by project/user/status
+- **Stale source**: Function queries a cached/denormalized field/table when it should query the source of truth
+- **Wrong join direction**: A join or relation traversal expressed backwards relative to the actual foreign-key direction
+- **Missing filter**: Returns all rows/records when it should filter by project/user/status/tenant
 - **Overly broad filter**: Filters by a superset when it should filter by a subset
-- **Stale cache**: Reads a denormalized field that could be out of sync with the source table
+- **Stale cache**: Reads a denormalized/cached field that could be out of sync with the source table
 - **Semantic mismatches**: Function name doesn't match behavior; return values ignored; invariants assumed but not enforced; invalid state transitions possible
-- **Incorrect assumptions**: Race conditions on read-then-write without transactions; silent data loss via `.ok()`, `unwrap_or_default()`, `let _ =`; integer overflow/truncation via unchecked `as` casts; panics on empty collections
+- **Incorrect assumptions**: Race conditions on read-then-write without a transaction/lock; silent data loss via broad exception swallowing or silent fallback values in place of surfacing a failure; integer overflow/truncation via unchecked numeric conversions; crashes on empty collections
 
 ---
 
 #### Focus Area B: Query & Computation Efficiency
 
-- **N+1 queries**: `.await` calls inside `for`/`while` loops that hit the DB — helper functions may hide the query
-- **Unbatched queries**: Multiple sequential queries that could use `IN (...)` or `JOIN`
-- **Over-fetching**: Full models fetched when only a count or single column is needed
+- **N+1 queries**: A query/fetch call inside a loop that hits the DB — helper functions may hide the query
+- **Unbatched queries**: Multiple sequential single-row queries that could use `IN (...)`, a join, or a bulk fetch
+- **Over-fetching**: Full records/objects fetched when only a count or single field is needed
 - **Missing index hints**: Queries filtering on columns that likely aren't indexed
-- **SELECT * for existence checks**: Fetching full models just to check if something exists
-- **Unbounded queries**: No `.limit()` on user-facing list endpoints
-- **Redundant queries**: Same data fetched multiple times in the same request handler
-- **Recomputed values**: Values computed in a loop that could be computed once before it
-- **Duplicate collection passes**: Multiple `.iter()` passes that could be merged
-- **Unnecessary clones**: `.clone()` of large structs in loops (ignore small types: `i32`, short `String`, `Arc`)
-- **Collect-then-iterate**: `.collect::<Vec<_>>()` immediately followed by `.iter()`
-- **Rebuilding data structures**: `HashMap`/`HashSet` rebuilt on every call when it could be built once
+- **SELECT * for existence checks**: Fetching a full record just to check if something exists
+- **Unbounded queries**: No limit/pagination on user-facing list endpoints
+- **Redundant queries**: Same data fetched multiple times within the same request/handler
+- **Recomputed values**: Values computed repeatedly inside a loop that could be computed once before it
+- **Duplicate collection passes**: Multiple iterations over the same collection that could be merged into one
+- **Unnecessary copies**: Deep-copying/cloning large structures in loops (ignore cheap copies of small primitives or reference-counted handles)
+- **Collect-then-iterate**: Materializing a collection immediately before iterating it exactly once
+- **Rebuilding data structures**: A lookup structure (map/set) rebuilt on every call when it could be built once and reused
 
 ---
 
 #### Focus Area C: Async & Concurrency
 
 **Async bugs:**
-- **Lock held across `.await`**: A `Mutex`/`RwLock` guard alive across an await point risks deadlock
-- **Sequential awaits**: Two independent async calls awaited one after the other — should use `join!`/`try_join!`
-- **Fire-and-forget spawns**: `tokio::spawn` without storing or awaiting the `JoinHandle` — failures silently swallowed
+- **Lock held across a suspension point**: A mutex/lock guard still held while the code awaits/yields, risking deadlock
+- **Sequential awaits that could be concurrent**: Two independent async operations awaited one after another when the runtime offers a way to run them concurrently instead
+- **Fire-and-forget spawns**: A background task/goroutine/thread started without capturing its handle or errors — failures silently swallowed
 
 **Concurrency bugs:**
-- **Shared mutable state**: `static mut`, global mutable state without synchronization
-- **Unsound Send/Sync**: Manual `unsafe impl Send` or `unsafe impl Sync` that may not be valid
-- **Atomic ordering**: Atomics with `Ordering::Relaxed` where `SeqCst` or `AcqRel` is needed for correctness
-- **Lock ordering**: Multiple locks acquired in inconsistent order across call sites, risking deadlock
+- **Shared mutable state without synchronization**: Global/static mutable state accessed from multiple threads/tasks without a lock or atomic
+- **Unsound thread-safety overrides**: Manual assertions or annotations claiming a type/value is safe to share across threads when that safety hasn't actually been verified
+- **Weak memory ordering**: Atomics using a relaxed ordering where a stronger one is needed for correctness
+- **Inconsistent lock ordering**: Multiple locks acquired in different orders across call sites, risking deadlock
 
 ---
 
@@ -171,18 +123,18 @@ Check that queries match their intent:
 - **Inconsistent data sources**: Two functions that should return the same data but query different tables/fields
 - **Duplicate logic**: Same business rule implemented in two places that could drift apart
 - **Transaction boundaries**: Multi-step mutations that should be atomic but aren't wrapped in a transaction
-- **Soft-delete leaks**: Queries that don't filter by `deleted_at IS NULL` when they should, returning "deleted" records
+- **Soft-delete leaks**: Queries that don't filter out soft-deleted rows when they should, returning already-deleted records
 
 ---
 
 #### Focus Area E: Error Handling
 
-- **Silent swallowing**: `.ok()`, `unwrap_or_default()`, or `let _ =` hiding meaningful failures — distinguish intentional suppression from accidental
-- **Wrong error mapping**: Catching a specific error but mapping all errors to generic 500 when some should be 400/404/409
-- **Lost error context**: `.map_err(|_| ...)` or `.map_err(|e| SomeError::Generic)` discarding the original error message/type
-- **Retry on non-retryable**: Retrying operations that failed due to validation or permission errors, not transient issues
-- **Panic in library code**: `unwrap()` or `expect()` in shared code paths where the caller can't catch the panic
-- **Error type mismatches**: Function returns `Result<_, A>` but callers expect `Result<_, B>`, hiding via `.map_err` that loses information
+- **Silent swallowing**: Broad catch-and-ignore patterns that discard a failure without acting on it — distinguish intentional suppression from accidental
+- **Wrong error mapping**: Catching a specific error but mapping everything to one generic failure response when some cases warrant a more specific one
+- **Lost error context**: Re-wrapping or mapping an error in a way that discards the original message or type
+- **Retry on non-retryable**: Retrying operations that failed due to validation or permission errors, not transient ones
+- **Crashes in shared/library code**: An unguarded failure (unhandled exception, forced unwrap, assertion) in shared code paths where the caller has no way to catch or recover from it
+- **Error type mismatches**: A function's declared/returned error type doesn't match what callers actually expect, papered over by a lossy conversion
 
 ---
 
@@ -191,7 +143,7 @@ Check that queries match their intent:
 - **Missing input validation**: API endpoints that accept user input without checking length, range, format, or type constraints
 - **Inconsistent validation**: One endpoint validates a field (e.g., email format) but another endpoint accepting the same field doesn't
 - **String length before DB insert**: Strings accepted without length limits that will hit DB column limits and error at write time
-- **Enum deserialization**: Accepting serialized enum values that the business logic can't handle or doesn't expect
+- **Enum/type deserialization**: Accepting serialized values that the business logic can't handle or doesn't expect
 - **Negative/zero values**: Numeric inputs (pagination, quantities, IDs) not checked for negative or zero when those are nonsensical
 - **Path traversal**: File paths or identifiers built from user input without sanitization
 
@@ -199,12 +151,12 @@ Check that queries match their intent:
 
 #### Focus Area G: Resource & Memory
 
-- **Unbounded Vec growth**: Collections that grow with user-controlled input without any cap
-- **Unclosed streams/connections**: DB connections, file handles, or HTTP streams opened but not explicitly closed or dropped
-- **Connection pool exhaustion**: Long-held DB connections (e.g., streaming results while doing other work) that could starve the pool
+- **Unbounded collection growth**: Collections that grow with user-controlled input without any cap
+- **Unclosed streams/connections**: DB connections, file handles, sockets, or HTTP streams opened but never explicitly closed or released when the language/runtime requires explicit cleanup
+- **Connection pool exhaustion**: Long-held connections (e.g., streaming results while doing other work) that could starve the pool
 - **Large allocations in loops**: Allocating large buffers or strings inside a loop that could be allocated once and reused
-- **Unbounded channels**: `mpsc::unbounded_channel` or similar where a slow consumer causes unbounded memory growth
-- **Leaked tasks**: Spawned tasks that never complete (infinite loops without cancellation tokens)
+- **Unbounded queues/channels**: An unbounded queue or channel where a slow consumer causes unbounded memory growth
+- **Leaked background tasks**: Spawned tasks/threads/goroutines that never complete and have no cancellation mechanism
 
 ---
 
@@ -212,28 +164,28 @@ Check that queries match their intent:
 
 Check for logical fallacies and faulty reasoning in state/derivations — bugs that render or build fine but produce the wrong value or wrong screen:
 
-- **Incorrect boolean/conditional logic**: De Morgan's-law mistakes, negation errors, operator precedence bugs in `&&`/`||` chains
-- **Stale closures**: Callbacks or effects capturing outdated state/props from an earlier render
-- **Wrong dependency arrays**: Missing deps in `useEffect`/`useMemo`/`useCallback` (or a watcher/computed equivalent) causing stale reads, or extra deps causing thrashing
-- **Duplicated derived state**: A value copied into local state instead of computed on render, able to drift out of sync with its source
+- **Incorrect boolean/conditional logic**: De Morgan's-law mistakes, negation errors, operator precedence bugs in boolean chains
+- **Stale closures**: Callbacks or reactive effects capturing outdated state/props from an earlier render/update cycle
+- **Wrong reactive dependencies**: Missing dependencies in a reactive computation (an effect, memo, computed value, or watcher) causing stale reads, or extra dependencies causing thrashing
+- **Duplicated derived state**: A value copied into local state instead of computed on render/update, able to drift out of sync with its source
 - **Off-by-one errors**: List slicing, pagination offsets, or index math that's one short/long
-- **Reference-equality bugs**: Comparing objects/arrays by reference instead of value, causing missed updates; `==` vs `===` type-coercion bugs
-- **Async state races**: Out-of-order fetch/promise responses applied to state with no request-id or `AbortController` guard, so a stale response can overwrite a fresher one
-- **Wrong truthy/falsy assumptions**: Treating `0`, `''`, or `NaN` as "no value" incorrectly, or vice versa
-- **Direct state mutation**: Mutating an array/object in place (`.push`, field assignment) instead of via the setter/store API, silently missing re-renders
-- **Lossy spread merges**: `{...a, ...b}` or array spreads that drop nested fields the caller expected to survive the merge
+- **Reference-equality bugs**: Comparing objects/arrays by reference instead of value, causing missed updates; loose vs. strict equality/type-coercion bugs
+- **Async state races**: Out-of-order fetch/promise responses applied to state with no request-id or cancellation guard, so a stale response can overwrite a fresher one
+- **Wrong truthy/falsy assumptions**: Treating `0`, `''`, or `NaN`/`None` as "no value" incorrectly, or vice versa
+- **Direct state mutation**: Mutating an array/object in place instead of via the framework's setter/store API, silently missing re-renders
+- **Lossy merges**: Spread/merge operations that drop nested fields the caller expected to survive
 
 ---
 
 #### Focus Area I: Frontend Bugs & Rendering
 
-- **Missing/incorrect `key` prop**: List rendering without a stable unique key, or keyed by array index where items reorder — causes state to bleed across the wrong items
+- **Missing/incorrect list key**: List rendering without a stable unique key, or keyed by array index where items reorder — causes state to bleed across the wrong items
 - **Unbounded re-renders**: State set directly in the render body, or an effect whose own state update re-triggers itself
 - **Memory leaks**: Event listeners, timers, subscriptions, or observers registered without a corresponding cleanup/teardown
 - **Update-after-unmount**: State/store updates from an async callback that resolves after the component has unmounted, with no cleanup or abort
-- **Defeated memoization**: Inline function/object/array literals passed as props to a `memo`/`useMemo`-wrapped child, forcing it to re-render every time anyway
-- **Rules-of-hooks violations**: Hooks called conditionally, in loops, or after an early return
-- **Controlled/uncontrolled input flip**: An input's value prop switches between `undefined` and a defined value across renders
+- **Defeated memoization**: Inline function/object/array literals passed as props to a memoized child, forcing it to re-render every time anyway
+- **Reactivity-rule violations**: Reactive primitives invoked conditionally, in loops, or after an early return, when the framework requires a stable call/registration order
+- **Controlled/uncontrolled input flip**: An input's bound value switches between `undefined`/unset and a defined value across renders
 - **Duplicate fetch/subscription**: An effect re-running (e.g. double-invoke in strict/dev mode, or a changed dependency) fires the same fetch or subscription again without guarding against duplicates
 
 ---
@@ -301,7 +253,7 @@ If the user's follow-up message already specifies an unambiguous scope (e.g., "f
 
 #### 5c. Verify and report
 
-After all fix agents complete, run the stack-appropriate check (`cargo check`/`cargo clippy` for Rust, `tsc --noEmit` or the project's lint/build script for frontend, if available) to confirm the combined edits compile/typecheck cleanly. Report which findings were fixed vs. skipped and why, grouped by file.
+After all fix agents complete, run whatever build/typecheck/lint command the project provides (check for one in the manifest's scripts/tasks, or ask the user if none is obvious) to confirm the combined edits are still sound. Report which findings were fixed vs. skipped and why, grouped by file.
 
 #### 5d. Loop or exit
 
@@ -323,19 +275,19 @@ Severity levels:
 ## Logic & efficiency sweep
 
 ### Bugs
-- [src/server.rs:142](src/server.rs#L142) — **[Logic]** `get_assignments` queries `item.annotators` array for email lookup, but removed annotators disappear from that array. Should query `annotations` table for `created_by` IDs instead.
-  **Fix**: `Annotation::find().filter(annotation::Column::ItemId.is_in(item_ids)).all(db).await` and extract unique `created_by` values.
-- [src/components/Search.tsx:58](src/components/Search.tsx#L58) — **[Frontend Logic]** Fetch results are applied to state with no request-id guard, so a slow earlier keystroke's response can overwrite a newer one.
-  **Fix**: Track a request id/`AbortController`; ignore responses that don't match the latest request.
+- [handlers/assignments:142](handlers/assignments#L142) — **[Logic]** `get_assignments` reads the live-assignment list for email lookup, but removed assignees disappear from that list. Should read the assignment-history record instead.
+  **Fix**: Query the history table filtered by item IDs and extract unique assignee IDs.
+- [components/Search:58](components/Search#L58) — **[Frontend Logic]** Fetch results are applied to state with no request-id guard, so a slow earlier keystroke's response can overwrite a newer one.
+  **Fix**: Track a request id/cancellation token; ignore responses that don't match the latest request.
 
 ### Inefficiencies
-- [src/annotation_server.rs:454](src/annotation_server.rs#L454) — **[Efficiency]** N+1 query: loops over items and issues one `COUNT(*)` per item.
-  **Fix**: Single query with `.group_by(annotation::Column::ItemId).count().all(db).await`.
+- [server/annotations:454](server/annotations#L454) — **[Efficiency]** N+1 query: loops over items and issues one count query per item.
+  **Fix**: Single grouped count query across all item IDs.
 
 ### Smells
-- [src/export_server.rs:170](src/export_server.rs#L170) — **[Efficiency]** Three `HashSet<i32>` rebuilds from `data.items` look redundant but are correct (each `retain` mutates). Add a comment to prevent future "cleanup" that breaks it.
-- [src/components/ItemList.tsx:31](src/components/ItemList.tsx#L31) — **[Frontend Bugs]** List keyed by array index while items are reorderable via drag-and-drop, causing input state to bleed onto the wrong row after a reorder.
-  **Fix**: Key by `item.id` instead of index.
+- [server/export:170](server/export#L170) — **[Efficiency]** Three set rebuilds from the same source collection look redundant but are correct (each mutates in between). Add a comment to prevent future "cleanup" that breaks it.
+- [components/ItemList:31](components/ItemList#L31) — **[Frontend Bugs]** List keyed by array index while items are reorderable via drag-and-drop, causing input state to bleed onto the wrong row after a reorder.
+  **Fix**: Key by item id instead of index.
 
 ### Summary
 | Focus area | Bugs | Inefficiencies | Smells |
@@ -358,19 +310,18 @@ If no issues are found, say so explicitly with a summary of what was checked (fi
 
 ## Judgment calls
 
-- **Framework idioms override general rules.** Dioxus `#[server]` functions, `use_server_future`, `use_signal` patterns are intentional — don't flag them.
+- **Framework idioms override general rules.** Once you've identified the framework/library in use, its documented lifecycle and reactivity conventions are intentional — don't flag them as bugs just because a generic rule would suggest otherwise.
 - **Small N is fine.** An N+1 loop over 3-5 items in an admin-only endpoint is a smell, not an inefficiency. Focus on user-facing paths with unbounded N.
 - **Transactions have cost.** Don't recommend wrapping everything in a transaction — only flag multi-step mutations where interleaving would corrupt data.
 - **Don't flag tested patterns.** If a pattern is used consistently across the codebase and works, it's a convention, not a bug. Only flag if you can demonstrate incorrect results.
-- **Distinguish "wrong" from "suboptimal".** A Rust-side filter after a DB query is suboptimal but not wrong. A query against the wrong table IS wrong. Rank accordingly.
-- **Context matters for data source bugs.** `item.annotators` is correct for "who is currently assigned?" but wrong for "who has ever annotated?" — understand the intent before flagging.
-- **Don't flag `.clone()` on small types.** Cloning an `i32`, short `String`, or `Arc` is cheap. Only flag clones of large structs or inside hot loops with large N.
-- **Don't flag intentional `.ok()` / `let _ =`** where a comment or context makes clear the error is deliberately ignored (e.g., best-effort logging, cleanup on shutdown).
-- **Fix sketches must be inline, not abstracted.** Never suggest wrapping a one-liner in a helper function. The fix sketch should be the smallest diff that resolves the issue — a changed expression, a different method call, an added `.limit()`. If the existing code is already concise, the fix must be equally concise.
+- **Distinguish "wrong" from "suboptimal".** A late-stage in-memory filter after a broad query is suboptimal but not wrong. A query against the wrong table/collection IS wrong. Rank accordingly.
+- **Context matters for data source bugs.** The same field can be correct for one question and wrong for another (e.g., a live assignment list is correct for "who is currently assigned?" but wrong for "who has ever worked on this?") — understand the intent before flagging.
+- **Don't flag cheap copies.** Copying small primitives, short strings, or lightweight reference handles is cheap in most languages/runtimes. Only flag copies of large structures or copies inside hot loops with large N.
+- **Don't flag intentional error suppression** where a comment or context makes clear the error is deliberately ignored (e.g., best-effort logging, cleanup on shutdown).
+- **Fix sketches must be inline, not abstracted.** Never suggest wrapping a one-liner in a helper function. The fix sketch should be the smallest diff that resolves the issue — a changed expression, a different method call, an added limit/pagination clause. If the existing code is already concise, the fix must be equally concise.
 - **Boundary validation is contextual.** Internal-only endpoints between trusted services need less validation than public-facing APIs. Understand the trust boundary before flagging.
-- **Frontend framework idioms override general rules.** A `useEffect(() => {...}, [])` "run once on mount" pattern, Vue's `watchEffect`, and Svelte's reactive `$:` statements are intentional — don't flag the "missing"/"extra" dependency as a bug just because a generic rule would suggest otherwise.
-- **Don't flag test/story-only code.** Files under `__tests__`, `*.test.tsx`, `*.spec.ts`, or `*.stories.tsx` are exempt from rendering/state findings — they intentionally exercise edge cases.
-- **New identity per render isn't automatically a bug.** React re-creates inline functions/objects on every render by default; only flag this as a Frontend Bugs finding when it demonstrably defeats a `memo`/`useMemo`/`useCallback` on an expensive child, not as a blanket style rule.
+- **Don't flag test/story-only code.** Files clearly scoped to tests, stories, or fixtures (following whatever testing convention the project uses) are exempt from rendering/state findings — they intentionally exercise edge cases.
+- **New identity per render isn't automatically a bug.** Many frameworks re-create inline functions/objects on every render by default; only flag this as a Frontend Bugs finding when it demonstrably defeats a memoization mechanism on an expensive child, not as a blanket style rule.
 
 ## What this skill does NOT do
 
