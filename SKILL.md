@@ -3,8 +3,9 @@ name: code-sweep
 description: >-
   Sweep logical fallacies, inefficiencies, data integrity issues, 
   concurrency bugs, error handling problems, boundary validation gaps, 
-  resource leaks, and rendering/state bugs. Uses parallel subagents 
-  for each focus area. Read-only report with ranked findings.
+  resource leaks, and rendering/state bugs. Runs the selected focus 
+  area as one or more parallel subagents, sharded by file count on 
+  large codebases. Read-only report with ranked findings.
 when_to_use: >-
   TRIGGER when the user /code-sweep. Not for style/naming 
   (use /rust-best-practices) or security audits.
@@ -21,30 +22,29 @@ allowed-tools:
   - Agent
 ---
 
-**Prioritize by blast radius**: request handlers / top-level routed pages/components > shared business logic / shared components & hooks > background jobs / one-off scripts & isolated utility components. If >30 files in a language track, audit the top 10-15 by importance and note unevaluated files in the report.
+**Prioritize by blast radius**: request handlers / top-level routed pages/components > shared business logic / shared components & hooks > background jobs / one-off scripts & isolated utility components. This ordering determines shard order and truncation order in Step 2 when the selected area's file set is large.
 
 ## Procedure
 
-### 0. Ask the user which focus areas to run
+### 0. Ask the user which focus area to run
 
-Before doing anything else, present a selection dialog to the user. Use the tool or UI available in your environment to ask a multiple-choice question:
+Before doing anything else, present a selection dialog to the user. Use the tool or UI available in your environment to ask a single-choice question — the user picks exactly one option, not several:
 
 **Prompt:**
-> Which focus areas should this sweep cover?
+> Which focus area should this sweep cover?
 
-**Options (multi-select):**
-1. **All** — run all 9 focus areas
-2. **Logic & Data Sources** — wrong queries, stale sources, semantic mismatches, incorrect assumptions
-3. **Query & Computation Efficiency** — N+1 queries, redundant computation, over-fetching, unbounded queries
-4. **Async & Concurrency** — lock-across-suspension, sequential awaits, fire-and-forget, shared mutable state, weak atomics
-5. **Data Integrity** — partial writes, orphaned records, transaction boundaries, soft-delete leaks
-6. **Error Handling** — silent swallowing, wrong mapping, lost context, crashes in library code
-7. **Boundary Validation** — missing input validation, inconsistent checks, enum/type deserialization, path traversal
-8. **Resource & Memory** — unbounded growth, unclosed streams, connection pool exhaustion, leaked tasks
-9. **Frontend Logic & State** — incorrect conditionals, stale closures, wrong effect/watcher dependencies, race conditions in async state
-10. **Frontend Bugs & Rendering** — missing/wrong list keys, unbounded re-renders, memory leaks, reactivity-rule violations
+**Options (single-select):**
+1. **Logic & Data Sources** — wrong queries, stale sources, semantic mismatches, incorrect assumptions
+2. **Query & Computation Efficiency** — N+1 queries, redundant computation, over-fetching, unbounded queries
+3. **Async & Concurrency** — lock-across-suspension, sequential awaits, fire-and-forget, shared mutable state, weak atomics
+4. **Data Integrity** — partial writes, orphaned records, transaction boundaries, soft-delete leaks
+5. **Error Handling** — silent swallowing, wrong mapping, lost context, crashes in library code
+6. **Boundary Validation** — missing input validation, inconsistent checks, enum/type deserialization, path traversal
+7. **Resource & Memory** — unbounded growth, unclosed streams, connection pool exhaustion, leaked tasks
+8. **Frontend Logic & State** — incorrect conditionals, stale closures, wrong effect/watcher dependencies, race conditions in async state
+9. **Frontend Bugs & Rendering** — missing/wrong list keys, unbounded re-renders, memory leaks, reactivity-rule violations
 
-If the user selects **All**, run all 9. Otherwise run only the selected areas. Wait for the user's response before proceeding.
+Run only the selected area. Wait for the user's response before proceeding.
 
 ### 1. Orient — understand the stack
 
@@ -52,11 +52,16 @@ Before any analysis, read the project's manifest/dependency file and entrypoint 
 
 Locate the data-access layer by reading the code, not by grepping for one library's API by name. Read a handful of call sites that read or write persisted data — functions/methods whose names or usage suggest they query, save, or mutate stored records — to learn the actual data-access API in use, then use that vocabulary for your own grep passes for the rest of this focus area.
 
-**If Frontend Logic & State or Frontend Bugs & Rendering are selected**, also identify the frontend framework (or templating/rendering approach) in use from the manifest and a representative file, so subagents know which idioms — state declarations, effects/derivations, lifecycle hooks — are intentional for it. If more than one frontend approach is present with substantial file counts, or none is clearly identifiable despite frontend files existing, ask the user which to target via `AskUserQuestion` before dispatching the frontend subagents — do not guess.
+**If Frontend Logic & State or Frontend Bugs & Rendering are selected**, also identify the frontend framework (or templating/rendering approach) in use from the manifest and a representative file, so subagents know which idioms — state declarations, effects/derivations, lifecycle hooks — are intentional for it. If more than one frontend approach is present with substantial file counts, or none is clearly identifiable despite frontend files existing, ask the user which to target via `AskUserQuestion` before dispatching the frontend subagent(s) — do not guess.
 
-### 2. Dispatch parallel subagents
+### 2. Dispatch the focus-area subagent(s)
 
-After orientation, launch **the selected focus areas as parallel subagents** (from Step 0). Each subagent gets its own context window and works independently. Do NOT run them sequentially — use parallel tool calls so they all run at the same time. Only dispatch focus areas the user selected.
+After orientation, determine how many files are relevant to the selected focus area (from Step 1's discovery):
+
+- **≤30 relevant files**: launch a single subagent for the area.
+- **>30 relevant files**: shard the file list into groups of at most 15 files each, ordered by the blast-radius priority above (highest-priority files go in the first shard), and launch one subagent per shard — up to a cap of 4 shards (60 files) — all in parallel. If the relevant file count still exceeds what 4 shards cover, note the lowest-priority remainder as unevaluated in the final report rather than silently dropping it.
+
+Launch as a subagent rather than reviewing inline either way. This keeps each subagent's context isolated to just its checklist and its assigned files, instead of inheriting the orchestrator's conversation (the picker dialog, orientation steps, etc.) — that isolation is what keeps findings accurate, independent of whether one subagent runs or several shards do.
 
 Each focus area's full checklist lives in its own file under this skill's own `focus-areas/` directory (resolve these paths relative to the skill's base directory, not the project being audited) — kept separate so neither the orchestrator nor any one subagent has to load all nine checklists at once:
 
@@ -72,11 +77,11 @@ Each focus area's full checklist lives in its own file under this skill's own `f
 | Frontend Logic & State | `focus-areas/frontend-logic-state.md` |
 | Frontend Bugs & Rendering | `focus-areas/frontend-bugs-rendering.md` |
 
-Do not read these files yourself before dispatching — that would defeat the point of splitting them out. Instead, give each subagent the absolute path to its one file and instruct it to Read that file first, as its first action, before doing anything else.
+Do not read the selected area's file yourself before dispatching — that would defeat the point of splitting them out. Instead, give each subagent the absolute path to the same checklist file (every shard of one area uses the same file) and instruct it to Read that file first, as its first action, before doing anything else.
 
 Each subagent should:
 1. Read its assigned focus-area file (and only that file) to get its checklist
-2. Read only the source files relevant to its focus area
+2. Read only its assigned files (all of the area's relevant files if unsharded, or just its own shard if sharded)
 3. Produce findings in the standard severity format (Bug / Inefficiency / Smell)
 4. Return its section of the report
 
@@ -116,7 +121,7 @@ Findings with no git signal indicating intent keep their original severity uncha
 
 ### 4. Merge and finalize report
 
-After all subagents complete and git validation is done, merge their findings into a single report. Deduplicate any findings that overlap across focus areas (e.g., a transaction boundary issue found by both Logic and Data Integrity). Keep the higher severity classification if they differ.
+After all subagents complete and git validation is done, merge their findings into a single report. If the selected area was sharded (Step 2), this is a straightforward concatenation — shards cover disjoint files, so no cross-shard dedup is needed.
 
 ### 5. Optional follow-up: fix findings (only if explicitly requested)
 
@@ -162,39 +167,26 @@ Severity levels:
 - **Smell** — not wrong today but fragile; likely to break as code evolves. Note for awareness.
 
 ```md
-## Logic & efficiency sweep
+## Logic & Data Sources sweep
 
 ### Bugs
-- [handlers/assignments:142](handlers/assignments#L142) — **[Logic]** `get_assignments` reads the live-assignment list for email lookup, but removed assignees disappear from that list. Should read the assignment-history record instead.
+- [handlers/assignments:142](handlers/assignments#L142) — `get_assignments` reads the live-assignment list for email lookup, but removed assignees disappear from that list. Should read the assignment-history record instead.
   **Fix**: Query the history table filtered by item IDs and extract unique assignee IDs.
-- [components/Search:58](components/Search#L58) — **[Frontend Logic]** Fetch results are applied to state with no request-id guard, so a slow earlier keystroke's response can overwrite a newer one.
-  **Fix**: Track a request id/cancellation token; ignore responses that don't match the latest request.
 
 ### Inefficiencies
-- [server/annotations:454](server/annotations#L454) — **[Efficiency]** N+1 query: loops over items and issues one count query per item.
+- [server/annotations:454](server/annotations#L454) — N+1 query: loops over items and issues one count query per item.
   **Fix**: Single grouped count query across all item IDs.
 
 ### Smells
-- [server/export:170](server/export#L170) — **[Efficiency]** Three set rebuilds from the same source collection look redundant but are correct (each mutates in between). Add a comment to prevent future "cleanup" that breaks it.
-- [components/ItemList:31](components/ItemList#L31) — **[Frontend Bugs]** List keyed by array index while items are reorderable via drag-and-drop, causing input state to bleed onto the wrong row after a reorder.
-  **Fix**: Key by item id instead of index.
+- [server/export:170](server/export#L170) — Three set rebuilds from the same source collection look redundant but are correct (each mutates in between). Add a comment to prevent future "cleanup" that breaks it.
 
 ### Summary
-| Focus area | Bugs | Inefficiencies | Smells |
-|---|---|---|---|
-| Logic & Data Sources | 1 | 0 | 0 |
-| Query & Computation | 0 | 1 | 1 |
-| Async & Concurrency | 0 | 0 | 0 |
-| Data Integrity | 0 | 0 | 0 |
-| Error Handling | 0 | 0 | 0 |
-| Boundary Validation | 0 | 0 | 0 |
-| Resource & Memory | 0 | 0 | 0 |
-| Frontend Logic & State | 1 | 0 | 0 |
-| Frontend Bugs & Rendering | 0 | 0 | 1 |
-| **Total** | **2** | **1** | **2** |
+| Bugs | Inefficiencies | Smells |
+|---|---|---|
+| 1 | 1 | 1 |
 ```
 
-Tag each finding with its focus area in brackets (e.g., **[Logic]**, **[Async]**, **[Boundary]**, **[Frontend Logic]**, **[Frontend Bugs]**) so the user knows which area surfaced it.
+Name the report after the focus area that was run (as in the heading above) — with only one area per sweep, there's no need to tag individual findings by area.
 
 If no issues are found, say so explicitly with a summary of what was checked (file count, function count) so the user knows the sweep ran thoroughly.
 
