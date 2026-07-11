@@ -84,7 +84,7 @@ Don't read the selected area's file yourself before dispatching — that would d
 Each subagent should:
 1. Read its assigned focus-area file (only that file) to get its checklist
 2. Read only its assigned files (all of the area's relevant files if unsharded, or just its shard if sharded)
-3. Produce findings in the standard severity format (Bug / Inefficiency / Smell)
+3. Produce findings in the standard severity format (Bug / Inefficiency / Smell), tagging any finding that involves business logic (per the "Tag business-logic findings" judgment call below) with `**[Business Logic]**`
 4. Return its section of the report
 
 ### 3. Validate findings against git history
@@ -127,6 +127,8 @@ Merge all subagents' findings into a single report. If the selected area was sha
 
 **If All was selected**, dedup across areas before finalizing: different areas can flag the same `file:line` (e.g., an unbounded query surfacing as both an Efficiency and a Resource finding). Merge such duplicates into one entry under the higher severity, noting both areas' perspectives.
 
+Tally the findings tagged `[Business Logic]` and append the summary callout described in Report format below (once per report, across all areas if All was selected — not per-area).
+
 ### 5. Fix findings
 
 Loop until the user is done:
@@ -137,7 +139,7 @@ Build a multi-select `AskUserQuestion` listing every fixable finding from the re
 
 Format each option as:
 
-- **label**: `[Severity] file:line — short summary` (e.g., `[Bug] src/server.rs:142 — stale annotator query`)
+- **label**: `[Severity] file:line — short summary` (e.g., `[Bug] src/server.rs:142 — stale annotator query`); findings tagged `[Business Logic]` in the report keep that marker in the label, e.g. `[Bug][Business Logic] src/server.rs:142 — stale annotator query`
 - **description**: The fix sketch from the report so the user knows what will change
 
 If the user's follow-up message already specifies an unambiguous scope (e.g., "fix all the bugs", "fix everything"), skip the picker for the first iteration and select the matching findings automatically — but still present the picker on subsequent iterations if unfixed findings remain.
@@ -161,7 +163,7 @@ If unfixed findings remain (unselected in 5a or skipped during 5b), loop back to
 
 ## Report format
 
-Markdown report grouped by severity. Each entry: `file:line` (clickable), the problematic code snippet, what's wrong, and a brief fix sketch.
+Markdown report grouped by severity. Each entry: `file:line` (clickable), the problematic code snippet, what's wrong, and a brief fix sketch. A finding that involves business logic (per the "Tag business-logic findings" judgment call below) gets a `**[Business Logic]**` marker right after the bullet, before the file link.
 
 Severity levels:
 - **Bug** — produces wrong results, data loss, or incorrect state. Fix immediately.
@@ -172,7 +174,7 @@ Severity levels:
 ## Logic & Data Sources sweep
 
 ### Bugs
-- [handlers/assignments:142](handlers/assignments#L142) — `get_assignments` reads the live-assignment list for email lookup, but removed assignees disappear from that list. Should read the assignment-history record instead.
+- **[Business Logic]** [handlers/assignments:142](handlers/assignments#L142) — `get_assignments` reads the live-assignment list for email lookup, but removed assignees disappear from that list. Should read the assignment-history record instead.
   **Fix**: Query the history table filtered by item IDs and extract unique assignee IDs.
 
 ### Inefficiencies
@@ -186,9 +188,13 @@ Severity levels:
 | Bugs | Inefficiencies | Smells |
 |---|---|---|
 | 1 | 1 | 1 |
+
+> ⚠️ 1 of these findings involves business logic and may need confirmation from a domain expert before fixing.
 ```
 
-Name the report after the focus area that was run (as in the heading above) — when a single area runs, individual findings don't need area tags. **If All was selected**, title the report `## Full sweep` and give each area its own subsection in the format above (skipping areas with no findings), followed by one combined summary table with a row per area.
+Name the report after the focus area that was run (as in the heading above) — when a single area runs, individual findings don't need area tags. **If All was selected**, title the report `## Full sweep` and give each area its own subsection in the format above (skipping areas with no findings), followed by one combined summary table with a row per area, then a single combined business-logic callout (per Step 4).
+
+Omit the business-logic callout entirely when no finding is tagged — don't state "0 findings involve business logic."
 
 If no issues are found, say so explicitly with a summary of what was checked (file count, function count) so the user knows the sweep ran thoroughly.
 
@@ -200,6 +206,7 @@ If no issues are found, say so explicitly with a summary of what was checked (fi
 - **Don't flag tested patterns.** A pattern used consistently and working across the codebase is a convention, not a bug — flag only if you can show incorrect results.
 - **Distinguish "wrong" from "suboptimal".** A late in-memory filter after a broad query is suboptimal, not wrong. A query against the wrong table/collection IS wrong — rank accordingly.
 - **Context matters for data-source bugs.** The same field can be right for one question and wrong for another (e.g., a live-assignment list is correct for "who's currently assigned?" but wrong for "who's ever worked on this?") — understand intent before flagging.
+- **Tag business-logic findings.** A finding involves business logic when the code is technically well-formed but its correctness depends on a domain/business rule — e.g. wrong eligibility or calculation logic, a semantic mismatch between what's queried and what's intended (see "Context matters for data-source bugs" above), an incorrect status/lifecycle transition, or a data-integrity rule tied to how the business defines a valid record. It excludes purely mechanical issues (N+1 queries, resource leaks, race conditions, missing null checks) even when severe. When in doubt, ask: "would fixing this require confirming an intended business rule with a domain expert, or just fixing how the code executes?" — if the former, tag it `**[Business Logic]**` (see Report format).
 - **Don't flag cheap copies.** Copying small primitives, short strings, or lightweight references is cheap in most runtimes — only flag copies of large structures or copies inside hot loops with large N.
 - **Don't flag intentional error suppression** where a comment or context shows the error is deliberately ignored (e.g., best-effort logging, shutdown cleanup).
 - **Fix sketches must be inline, not abstracted.** Never wrap a one-liner in a helper function. The fix should be the smallest diff that resolves the issue — a changed expression, a different call, an added limit/pagination clause.
